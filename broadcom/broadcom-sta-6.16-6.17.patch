@@ -1,0 +1,148 @@
+--- a/Makefile
++++ b/Makefile
+@@ -123,15 +123,15 @@
+ GCCVERSION := $(shell expr `echo $(GCCVERSION)` | cut -b1-3)
+ GE_49 := $(shell expr `echo $(GCCVERSION)` \>= 490)
+ 
+-EXTRA_CFLAGS :=
++ccflags-y :=
+ 
+ ifeq ($(APIFINAL),CFG80211)
+-  EXTRA_CFLAGS += -DUSE_CFG80211
++  ccflags-y += -DUSE_CFG80211
+   $(info Using CFG80211 API)
+ endif
+ 
+ ifeq ($(APIFINAL),WEXT)
+-  EXTRA_CFLAGS += -DUSE_IW
++  ccflags-y += -DUSE_IW
+   $(info Using Wireless Extension API)
+ endif
+ 
+@@ -143,12 +143,12 @@
+ wl-objs            += src/wl/sys/wl_iw.o
+ wl-objs            += src/wl/sys/wl_cfg80211_hybrid.o
+ 
+-EXTRA_CFLAGS       += -I$(src)/src/include -I$(src)/src/common/include
+-EXTRA_CFLAGS       += -I$(src)/src/wl/sys -I$(src)/src/wl/phy -I$(src)/src/wl/ppr/include
+-EXTRA_CFLAGS       += -I$(src)/src/shared/bcmwifi/include
+-#EXTRA_CFLAGS       += -DBCMDBG_ASSERT -DBCMDBG_ERR
++ccflags-y       += -I$(M)/src/include -I$(M)/src/common/include
++ccflags-y       += -I$(M)/src/wl/sys -I$(M)/src/wl/phy -I$(M)/src/wl/ppr/include
++ccflags-y       += -I$(M)/src/shared/bcmwifi/include
++#ccflags-y       += -DBCMDBG_ASSERT -DBCMDBG_ERR
+ ifeq "$(GE_49)" "1"
+-EXTRA_CFLAGS       += -Wno-date-time
++ccflags-y       += -Wno-date-time
+ endif
+ 
+ # Look for kernel architecture.
+@@ -168,7 +168,7 @@
+     endif
+ endif
+ 
+-EXTRA_LDFLAGS      := $(src)/lib/$(SHIPPED)
++ldflags-y      := $(M)/lib/$(SHIPPED)
+ 
+ KVER               ?= $(shell uname -r)
+ KBASE              ?= /lib/modules/$(KVER)
+--- a/src/wl/sys/wl_linux.c
++++ b/src/wl/sys/wl_linux.c
+@@ -2370,7 +2370,11 @@
+ ) {
+ 	wl_timer_t *t =
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++		timer_container_of(t, tl, timer);
++#else
+ 		from_timer(t, tl, timer);
++#endif
+ #else
+ 		(wl_timer_t *)data;
+ #endif
+@@ -2475,7 +2479,11 @@
+ 	ASSERT(t);
+ 	if (t->set) {
+ 		t->set = FALSE;
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++		if (!timer_delete(&t->timer)) {
++#else
+ 		if (!del_timer(&t->timer)) {
++#endif
+ #ifdef BCMDBG
+ 			WL_INFORM(("wl%d: Failed to delete timer %s\n", wl->unit, t->name));
+ #endif
+--- a/src/wl/sys/wl_cfg80211_hybrid.c
++++ b/src/wl/sys/wl_cfg80211_hybrid.c
+@@ -67,7 +67,11 @@
+ static s32 wl_cfg80211_scan(struct wiphy *wiphy, struct net_device *ndev,
+            struct cfg80211_scan_request *request);
+ #endif
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++static s32 wl_cfg80211_set_wiphy_params(struct wiphy *wiphy, int radio_idx, u32 changed);
++#else
+ static s32 wl_cfg80211_set_wiphy_params(struct wiphy *wiphy, u32 changed);
++#endif
+ static s32 wl_cfg80211_join_ibss(struct wiphy *wiphy, struct net_device *dev,
+            struct cfg80211_ibss_params *params);
+ static s32 wl_cfg80211_leave_ibss(struct wiphy *wiphy, struct net_device *dev);
+@@ -86,7 +90,11 @@
+            struct cfg80211_connect_params *sme);
+ static s32 wl_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev, u16 reason_code);
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++static s32
++wl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
++                         int radio_idx, enum nl80211_tx_power_setting type, s32 mbm);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static s32
+ wl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
+                          enum nl80211_tx_power_setting type, s32 mbm);
+@@ -98,7 +106,9 @@
+            enum tx_power_setting type, s32 mbm);
+ #endif
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev, int radio_idx, u32 /*link_id*/, s32 *dbm);
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
+ static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev, u32 /*link_id*/, s32 *dbm);
+ #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev, s32 *dbm);
+@@ -659,7 +669,11 @@
+ 	return err;
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++static s32 wl_cfg80211_set_wiphy_params(struct wiphy *wiphy, int radio_idx, u32 changed)
++#else
+ static s32 wl_cfg80211_set_wiphy_params(struct wiphy *wiphy, u32 changed)
++#endif
+ {
+ 	struct wl_cfg80211_priv *wl = wiphy_to_wl(wiphy);
+ 	struct net_device *ndev = wl_to_ndev(wl);
+@@ -1095,7 +1109,11 @@
+ 	return err;
+ }
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++static s32
++wl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
++                         int radio_idx, enum nl80211_tx_power_setting type, s32 mbm)
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static s32
+ wl_cfg80211_set_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev,
+                          enum nl80211_tx_power_setting type, s32 mbm)
+@@ -1156,7 +1174,9 @@
+ 	return err;
+ }
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 16, 0)
++static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev, int radio_idx, u32 /*link_id*/, s32 *dbm)
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 14, 0)
+ static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev, u32 /*link_id*/, s32 *dbm)
+ #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+ static s32 wl_cfg80211_get_tx_power(struct wiphy *wiphy, struct wireless_dev *wdev, s32 *dbm)

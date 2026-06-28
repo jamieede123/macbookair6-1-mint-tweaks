@@ -1,0 +1,3 @@
+# local backups produced by the scripts
+*.bak.*
+*.orig
